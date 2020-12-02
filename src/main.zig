@@ -13,7 +13,7 @@ fn rfc1071Checksum(data: []const u16) u16 {
 }
 
 // From musl icmp.h
-const IcmpHdr = extern struct {
+const Icmp = extern struct {
     /// message type
     @"type": enum(u8) { ECHO_REPLY = 0, ECHO_REQUEST = 8, _ },
     /// type sub-code
@@ -32,9 +32,10 @@ const IcmpHdr = extern struct {
             mtu: u16,
         },
     },
+    data: [56]u8 = undefined,
 
-    pub fn initEcho(id: u16, sequence: u16) IcmpHdr {
-        var result = IcmpHdr{
+    pub fn initEcho(id: u16, sequence: u16) Icmp {
+        var result = Icmp{
             .@"type" = .ECHO_REQUEST,
             .code = 0,
             .checksum = undefined,
@@ -46,7 +47,7 @@ const IcmpHdr = extern struct {
         return result;
     }
 
-    pub fn recalcChecksum(self: *IcmpHdr) void {
+    pub fn recalcChecksum(self: *Icmp) void {
         self.checksum = 0;
         self.checksum = rfc1071Checksum(std.mem.bytesAsSlice(u16, std.mem.asBytes(self)));
     }
@@ -54,20 +55,20 @@ const IcmpHdr = extern struct {
 
 pub fn main() anyerror!void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const fs = try icmpConnectTo(&gpa.allocator, "1.1.1.1");
+    const fs = try icmpConnectTo(&gpa.allocator, "8.8.8.8");
     defer fs.close();
 
-    const echo = IcmpHdr.initEcho(1, 2);
+    const echo = Icmp.initEcho(1, 2);
     std.debug.print("{} -> {}\n", .{ echo, echo.un.echo });
 
     const written = try fs.write(std.mem.asBytes(&echo));
-    std.debug.assert(written == @sizeOf(IcmpHdr));
+    std.debug.assert(written == @sizeOf(Icmp));
 
     std.debug.print("written: {} bytes\n", .{written});
 
-    var buffer: [@sizeOf(IcmpHdr)]u8 = undefined;
+    var buffer: [@sizeOf(Icmp)]u8 = undefined;
     const read = try fs.read(&buffer);
-    std.debug.assert(read == @sizeOf(IcmpHdr));
+    std.debug.assert(read == @sizeOf(Icmp));
     std.debug.print("{}\n", .{buffer});
 }
 
