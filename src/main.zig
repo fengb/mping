@@ -12,6 +12,12 @@ fn rfc1071Checksum(data: []const u16) u16 {
     return ~sum;
 }
 
+fn now() std.os.timeval {
+    var result: std.os.timeval = undefined;
+    std.os.gettimeofday(&result, null);
+    return result;
+}
+
 // From musl icmp.h
 const Icmp = extern struct {
     /// message type
@@ -36,9 +42,9 @@ const Icmp = extern struct {
     data: extern struct {
         bytes: [56]u8 = [_]u8{0} ** 56,
 
-        pub fn setEchoTime(self: *@This(), now: std.os.timeval) void {
-            std.mem.writeIntBig(u32, self.bytes[0..4], @intCast(u32, now.tv_sec));
-            std.mem.writeIntBig(i32, self.bytes[4..8], @intCast(i32, now.tv_usec));
+        pub fn setEchoTime(self: *@This(), time: std.os.timeval) void {
+            std.mem.writeIntBig(u32, self.bytes[0..4], @intCast(u32, time.tv_sec));
+            std.mem.writeIntBig(i32, self.bytes[4..8], @intCast(i32, time.tv_usec));
         }
 
         pub fn getEchoTime(self: @This()) std.os.timeval {
@@ -49,7 +55,7 @@ const Icmp = extern struct {
         }
     },
 
-    pub fn initEcho(id: u16, sequence: u16) Icmp {
+    pub fn initEcho(id: u16, sequence: u16, time: std.os.timeval) Icmp {
         var result = Icmp{
             .@"type" = .ECHO_REQUEST,
             .code = 0,
@@ -59,9 +65,7 @@ const Icmp = extern struct {
             },
             .data = .{},
         };
-        var now: std.os.timeval = undefined;
-        std.os.gettimeofday(&now, null);
-        result.data.setEchoTime(now);
+        result.data.setEchoTime(time);
         result.recalcChecksum();
         return result;
     }
@@ -88,7 +92,7 @@ pub fn main() anyerror!void {
     const fs = try icmpConnectTo(&gpa.allocator, "8.8.8.8");
     defer fs.close();
 
-    const echo = Icmp.initEcho(1, 2);
+    const echo = Icmp.initEcho(1, 2, now());
 
     const written = try fs.write(std.mem.asBytes(&echo));
     std.debug.assert(written == @sizeOf(Icmp));
