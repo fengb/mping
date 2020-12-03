@@ -66,6 +66,11 @@ const Icmp = extern struct {
         return result;
     }
 
+    pub fn fromIp(bytes: []align(4) const u8) *const @This() {
+        // First 20 bytes is the IP header
+        return @ptrCast(*const @This(), bytes[20..84]);
+    }
+
     pub fn recalcChecksum(self: *Icmp) void {
         self.checksum = 0;
         self.checksum = rfc1071Checksum(std.mem.bytesAsSlice(u16, std.mem.asBytes(self)));
@@ -74,7 +79,7 @@ const Icmp = extern struct {
     pub fn checksumValid(self: Icmp) bool {
         var copy = self;
         copy.checksum = 0;
-        return self.checksum == rfc1071Checksum(std.mem.bytesAsSlice(u16, std.mem.asBytes(copy)));
+        return self.checksum == rfc1071Checksum(std.mem.bytesAsSlice(u16, std.mem.asBytes(&copy)));
     }
 };
 
@@ -90,12 +95,12 @@ pub fn main() anyerror!void {
 
     std.debug.print("written: {} bytes\n", .{written});
 
-    var buffer: [@sizeOf(Icmp)]u8 = undefined;
+    var buffer: [0x100]u8 align(4) = undefined;
     const read = try fs.read(&buffer);
-    std.debug.assert(read == @sizeOf(Icmp));
+    std.debug.print("read: {} bytes\n", .{read});
 
-    const response = @bitCast(Icmp, buffer);
-    std.debug.print("{}\n", .{response.data.getEchoTime()});
+    const response = Icmp.fromIp(buffer[0..read]);
+    std.debug.print("{} -> {}\n", .{ response.checksumValid(), response.data.getEchoTime() });
 }
 
 pub fn icmpConnectTo(allocator: *std.mem.Allocator, name: []const u8) !std.fs.File {
