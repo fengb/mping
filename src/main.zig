@@ -3,13 +3,13 @@ const std = @import("std");
 //pub const io_mode = .evented;
 
 fn rfc1071Checksum(data: []const u16) u16 {
-    var result: u16 = 0;
+    var sum: u16 = 0;
     for (data) |d| {
-        if (@addWithOverflow(u16, result, d, &result)) {
-            result += 1;
+        if (@addWithOverflow(u16, sum, d, &sum)) {
+            sum += 1;
         }
     }
-    return result;
+    return ~sum;
 }
 
 // From musl icmp.h
@@ -28,11 +28,26 @@ const Icmp = extern struct {
         },
         gateway: u32,
         frag: extern struct {
-            __glibc_reserved: u16,
+            _reserved: u16,
             mtu: u16,
         },
     },
-    data: [56]u8 = undefined,
+
+    data: extern struct {
+        bytes: [56]u8 = [_]u8{0} ** 56,
+
+        pub fn setEchoTime(self: *@This(), now: std.os.timeval) void {
+            std.mem.writeIntBig(u32, self.bytes[0..4], @intCast(u32, now.tv_sec));
+            std.mem.writeIntBig(i32, self.bytes[4..8], @intCast(i32, now.tv_usec));
+        }
+
+        pub fn getEchoTime(self: @This()) std.os.timeval {
+            var result: std.os.timeval = undefined;
+            result.tv_sec = std.mem.readIntBig(u32, self.bytes[0..4]);
+            result.tv_usec = std.mem.readIntBig(i32, self.bytes[4..8]);
+            return result;
+        }
+    },
 
     pub fn initEcho(id: u16, sequence: u16) Icmp {
         var result = Icmp{
@@ -42,7 +57,11 @@ const Icmp = extern struct {
             .un = .{
                 .echo = .{ .id = id, .sequence = sequence },
             },
+            .data = .{},
         };
+        var now: std.os.timeval = undefined;
+        std.os.gettimeofday(&now, null);
+        result.data.setEchoTime(now);
         result.recalcChecksum();
         return result;
     }
@@ -50,6 +69,12 @@ const Icmp = extern struct {
     pub fn recalcChecksum(self: *Icmp) void {
         self.checksum = 0;
         self.checksum = rfc1071Checksum(std.mem.bytesAsSlice(u16, std.mem.asBytes(self)));
+    }
+
+    pub fn checksumValid(self: Icmp) bool {
+        var copy = self;
+        copy.checksum = 0;
+        return self.checksum == rfc1071Checksum(std.mem.bytesAsSlice(u16, std.mem.asBytes(copy)));
     }
 };
 
@@ -59,7 +84,6 @@ pub fn main() anyerror!void {
     defer fs.close();
 
     const echo = Icmp.initEcho(1, 2);
-    std.debug.print("{} -> {}\n", .{ echo, echo.un.echo });
 
     const written = try fs.write(std.mem.asBytes(&echo));
     std.debug.assert(written == @sizeOf(Icmp));
@@ -69,7 +93,9 @@ pub fn main() anyerror!void {
     var buffer: [@sizeOf(Icmp)]u8 = undefined;
     const read = try fs.read(&buffer);
     std.debug.assert(read == @sizeOf(Icmp));
-    std.debug.print("{}\n", .{buffer});
+
+    const response = @bitCast(Icmp, buffer);
+    std.debug.print("{}\n", .{response.data.getEchoTime()});
 }
 
 pub fn icmpConnectTo(allocator: *std.mem.Allocator, name: []const u8) !std.fs.File {
