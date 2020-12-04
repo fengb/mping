@@ -100,7 +100,11 @@ const Icmp = extern struct {
     }
 };
 
+var echo_id: u16 = undefined;
+
 pub fn main() anyerror!void {
+    echo_id = @truncate(u16, std.math.absCast(std.os.system.getpid()));
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const fs = try icmpConnectTo(&gpa.allocator, "8.8.8.8");
     defer fs.close();
@@ -108,9 +112,9 @@ pub fn main() anyerror!void {
     var responses = async handleResponses(fs);
 
     var seq: usize = 0;
-    while (true) : (seq += 1) {
+    while (true) : (seq +%= 1) {
         const time = now();
-        const echo = Icmp.initEcho(1, @truncate(u16, seq), time);
+        const echo = Icmp.initEcho(echo_id, @truncate(u16, seq), time);
 
         const written = try fs.write(std.mem.asBytes(&echo));
         std.debug.assert(written == @sizeOf(Icmp));
@@ -125,6 +129,10 @@ pub fn handleResponses(fs: std.fs.File) !void {
         const read = try fs.read(&buffer);
 
         const response = Icmp.fromIp(buffer[0..read]);
+
+        if (response.un.echo.id() != echo_id) {
+            continue;
+        }
 
         const sent = response.data.getEchoTime();
         const received = now();
