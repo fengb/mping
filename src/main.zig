@@ -1,6 +1,6 @@
 const std = @import("std");
 
-//pub const io_mode = .evented;
+pub const io_mode = .evented;
 
 fn rfc1071Checksum(data: []const u16) u16 {
     var sum: u16 = 0;
@@ -92,19 +92,28 @@ pub fn main() anyerror!void {
     const fs = try icmpConnectTo(&gpa.allocator, "8.8.8.8");
     defer fs.close();
 
-    const echo = Icmp.initEcho(1, 2, now());
+    var responses = async handleResponses(fs);
 
-    const written = try fs.write(std.mem.asBytes(&echo));
-    std.debug.assert(written == @sizeOf(Icmp));
+    var seq: usize = 0;
+    while (true) : (seq += 1) {
+        const time = now();
+        const echo = Icmp.initEcho(1, @truncate(u16, seq), time);
 
-    std.debug.print("written: {} bytes\n", .{written});
+        const written = try fs.write(std.mem.asBytes(&echo));
+        std.debug.assert(written == @sizeOf(Icmp));
+        std.debug.print("-> {}: {}\n", .{ seq, time });
+        std.time.sleep(std.time.ns_per_s);
+    }
+}
 
+pub fn handleResponses(fs: std.fs.File) !void {
     var buffer: [0x100]u8 align(4) = undefined;
-    const read = try fs.read(&buffer);
-    std.debug.print("read: {} bytes\n", .{read});
+    while (true) {
+        const read = try fs.read(&buffer);
 
-    const response = Icmp.fromIp(buffer[0..read]);
-    std.debug.print("{} -> {}\n", .{ response.checksumValid(), response.data.getEchoTime() });
+        const response = Icmp.fromIp(buffer[0..read]);
+        std.debug.print("<- {}: {}\n", .{ response.un.echo.sequence, response.data.getEchoTime() });
+    }
 }
 
 pub fn icmpConnectTo(allocator: *std.mem.Allocator, name: []const u8) !std.fs.File {
