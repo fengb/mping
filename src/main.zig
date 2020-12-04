@@ -2,9 +2,11 @@ const std = @import("std");
 
 pub const io_mode = .evented;
 
-fn rfc1071Checksum(data: []const u16) u16 {
+fn rfc1071Checksum(bytes: []const u8) u16 {
+    const slice = std.mem.bytesAsSlice(u16, bytes);
+
     var sum: u16 = 0;
-    for (data) |d| {
+    for (slice) |d| {
         if (@addWithOverflow(u16, sum, d, &sum)) {
             sum += 1;
         }
@@ -29,8 +31,16 @@ const Icmp = extern struct {
     un: extern union {
         /// path mtu discovery
         echo: extern struct {
-            id: u16,
-            sequence: u16,
+            id_be: u16,
+            sequence_be: u16,
+
+            pub fn id(self: @This()) u16 {
+                return std.mem.toNative(u16, self.id_be, .Big);
+            }
+
+            pub fn sequence(self: @This()) u16 {
+                return std.mem.toNative(u16, self.sequence_be, .Big);
+            }
         },
         gateway: u32,
         frag: extern struct {
@@ -61,7 +71,10 @@ const Icmp = extern struct {
             .code = 0,
             .checksum = undefined,
             .un = .{
-                .echo = .{ .id = id, .sequence = sequence },
+                .echo = .{
+                    .id_be = std.mem.nativeTo(u16, id, .Big),
+                    .sequence_be = std.mem.nativeTo(u16, sequence, .Big),
+                },
             },
             .data = .{},
         };
@@ -77,13 +90,13 @@ const Icmp = extern struct {
 
     pub fn recalcChecksum(self: *Icmp) void {
         self.checksum = 0;
-        self.checksum = rfc1071Checksum(std.mem.bytesAsSlice(u16, std.mem.asBytes(self)));
+        self.checksum = rfc1071Checksum(std.mem.asBytes(self));
     }
 
     pub fn checksumValid(self: Icmp) bool {
         var copy = self;
         copy.checksum = 0;
-        return self.checksum == rfc1071Checksum(std.mem.bytesAsSlice(u16, std.mem.asBytes(&copy)));
+        return self.checksum == rfc1071Checksum(std.mem.asBytes(&copy));
     }
 };
 
@@ -112,8 +125,18 @@ pub fn handleResponses(fs: std.fs.File) !void {
         const read = try fs.read(&buffer);
 
         const response = Icmp.fromIp(buffer[0..read]);
-        std.debug.print("<- {}: {}\n", .{ response.un.echo.sequence, response.data.getEchoTime() });
+
+        const sent = response.data.getEchoTime();
+        const received = now();
+
+        const diff_us: u64 = us(received) - us(sent);
+
+        std.debug.print("<- {}: {} {}.{}ms\n", .{ response.un.echo.sequence(), sent, diff_us / 1000, diff_us % 1000 });
     }
+}
+
+fn us(time: std.os.timeval) u64 {
+    return @intCast(u64, time.tv_sec) * 1000000 + @intCast(u64, time.tv_usec);
 }
 
 pub fn icmpConnectTo(allocator: *std.mem.Allocator, name: []const u8) !std.fs.File {
