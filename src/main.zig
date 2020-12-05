@@ -159,6 +159,9 @@ pub fn main() anyerror!void {
 
     var seq: usize = 0;
     while (true) : (seq +%= 1) {
+        var sleep_frame = async std.time.sleep(std.time.ns_per_s);
+        defer await sleep_frame;
+
         const time = now();
         const echo = Icmp.initEcho(echo_id, @truncate(u16, seq), time);
 
@@ -168,7 +171,6 @@ pub fn main() anyerror!void {
         }
 
         std.debug.print("-> {}: {}\n", .{ seq, time });
-        std.time.sleep(std.time.ns_per_s);
     }
 }
 
