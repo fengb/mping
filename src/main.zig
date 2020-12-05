@@ -138,24 +138,20 @@ pub fn main() anyerror!void {
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
-    const sockets = try gpa.allocator.alloc(std.fs.File, ips.len);
+    const sockets = try gpa.allocator.alloc(?std.fs.File, ips.len);
     defer gpa.allocator.free(sockets);
 
-    for (ips) |ip, i| {
-        sockets[i] = try icmpConnectTo(&gpa.allocator, ip);
-    }
+    std.mem.set(?std.fs.File, sockets, null);
     defer {
         for (sockets) |socket| {
-            socket.close();
+            if (socket) |sock| {
+                sock.close();
+            }
         }
     }
 
     const reply_frames = try gpa.allocator.alloc(@Frame(handleReplies), sockets.len);
     defer gpa.allocator.free(reply_frames);
-
-    for (sockets) |socket, i| {
-        reply_frames[i] = async handleReplies(socket);
-    }
 
     var seq: usize = 0;
     while (true) : (seq +%= 1) {
@@ -165,12 +161,30 @@ pub fn main() anyerror!void {
         const time = now();
         const echo = Icmp.initEcho(echo_id, @truncate(u16, seq), time);
 
-        for (sockets) |socket| {
-            const written = try socket.write(std.mem.asBytes(&echo));
-            std.debug.assert(written == @sizeOf(Icmp));
-        }
+        for (ips) |ip, i| {
+            if (sockets[i] == null) {
+                if (icmpConnectTo(&gpa.allocator, ip)) |socket| {
+                    sockets[i] = socket;
+                    reply_frames[i] = async handleReplies(socket);
+                } else |err| {
+                    std.debug.print("{} {} cannot connect: {}\n", .{ seq, ip, err });
+                    continue;
+                }
+            }
 
-        std.debug.print("-> {}: {}\n", .{ seq, time });
+            if (sockets[i].?.write(std.mem.asBytes(&echo))) |written| {
+                std.debug.assert(written == @sizeOf(Icmp));
+            } else |err| {
+                // TODO: shutdown before closing
+                std.debug.print("{} {} cannot connect: {}\n", .{ seq, ip, err });
+                sockets[i].?.close();
+                sockets[i] = null;
+                // TODO: ensure the listener is properly destroyed
+                // await reply_frames[i] catch |e| {
+                //     std.debug.print("Done! {}\n", .{e});
+                // };
+            }
+        }
     }
 }
 
@@ -191,7 +205,7 @@ pub fn handleReplies(fs: std.fs.File) !void {
 
         const diff_us: u64 = us(received) - us(sent);
 
-        std.debug.print("<- {}: {} {}.{}ms\n", .{ reply.un.echo.sequence(), ip_header.src_addr, diff_us / 1000, diff_us % 1000 });
+        std.debug.print("{} {} {}.{}ms\n", .{ reply.un.echo.sequence(), ip_header.src_addr, diff_us / 1000, diff_us % 1000 });
     }
 }
 
