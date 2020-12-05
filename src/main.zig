@@ -128,15 +128,20 @@ const IpHeader = extern struct {
 
 var echo_id: u16 = undefined;
 
-pub fn main() anyerror!void {
+pub fn main() anyerror!u8 {
     echo_id = @truncate(u16, std.math.absCast(std.os.system.getpid()));
 
-    const ips = [_][]const u8{
-        "8.8.8.8",
-        "10.0.0.1",
-    };
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+    const args = try std.process.argsAlloc(&gpa.allocator);
+    defer std.process.argsFree(&gpa.allocator, args);
+
+    const ips = args[1..];
+
+    if (ips.len == 0) {
+        std.debug.print("Usage: mping host [host2 ...]\n", .{});
+        return 1;
+    }
 
     const sockets = try gpa.allocator.alloc(?std.fs.File, ips.len);
     defer gpa.allocator.free(sockets);
