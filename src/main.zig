@@ -83,11 +83,6 @@ const Icmp = extern struct {
         return result;
     }
 
-    pub fn fromIp(bytes: []align(4) const u8) *const @This() {
-        // First 20 bytes is the IP header
-        return @ptrCast(*const @This(), bytes[20..84]);
-    }
-
     pub fn recalcChecksum(self: *Icmp) void {
         self.checksum = 0;
         self.checksum = rfc1071Checksum(std.mem.asBytes(self));
@@ -98,6 +93,37 @@ const Icmp = extern struct {
         copy.checksum = 0;
         return self.checksum == rfc1071Checksum(std.mem.asBytes(&copy));
     }
+};
+
+const IpHeader = extern struct {
+    ver_ihl: u8,
+    tos: u8,
+    total_length: u16,
+    id: u16,
+    flags_fo: u16,
+    ttl: u8,
+    protocol: u8,
+    checksum: u16,
+    src_addr: Ipv4Host,
+    dst_addr: Ipv4Host,
+
+    const Ipv4Host = extern struct {
+        bytes: [4]u8,
+
+        pub fn format(
+            self: Ipv4Host,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            try writer.print("{}.{}.{}.{}", .{
+                self.bytes[0],
+                self.bytes[1],
+                self.bytes[2],
+                self.bytes[3],
+            });
+        }
+    };
 };
 
 var echo_id: u16 = undefined;
@@ -151,9 +177,10 @@ pub fn handleReplies(fs: std.fs.File) !void {
     while (true) {
         const read = try fs.read(&buffer);
 
-        const reply = Icmp.fromIp(buffer[0..read]);
+        const ip_header = @ptrCast(*const IpHeader, &buffer);
+        const reply = @ptrCast(*const Icmp, buffer[@sizeOf(IpHeader)..]);
 
-        if (reply.un.echo.id() != echo_id) {
+        if (!reply.checksumValid() or reply.un.echo.id() != echo_id) {
             continue;
         }
 
@@ -162,7 +189,7 @@ pub fn handleReplies(fs: std.fs.File) !void {
 
         const diff_us: u64 = us(received) - us(sent);
 
-        std.debug.print("<- {}: {} {}.{}ms\n", .{ reply.un.echo.sequence(), sent, diff_us / 1000, diff_us % 1000 });
+        std.debug.print("<- {}: {} {}.{}ms\n", .{ reply.un.echo.sequence(), ip_header.src_addr, diff_us / 1000, diff_us % 1000 });
     }
 }
 
