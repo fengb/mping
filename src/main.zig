@@ -105,41 +105,64 @@ var echo_id: u16 = undefined;
 pub fn main() anyerror!void {
     echo_id = @truncate(u16, std.math.absCast(std.os.system.getpid()));
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const fs = try icmpConnectTo(&gpa.allocator, "8.8.8.8");
-    defer fs.close();
+    const ips = [_][]const u8{
+        "8.8.8.8",
+        "10.0.0.1",
+    };
 
-    var responses = async handleResponses(fs);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+    const sockets = try gpa.allocator.alloc(std.fs.File, ips.len);
+    defer gpa.allocator.free(sockets);
+
+    for (ips) |ip, i| {
+        sockets[i] = try icmpConnectTo(&gpa.allocator, ip);
+    }
+    defer {
+        for (sockets) |socket| {
+            socket.close();
+        }
+    }
+
+    const reply_frames = try gpa.allocator.alloc(@Frame(handleReplies), sockets.len);
+    defer gpa.allocator.free(reply_frames);
+
+    for (sockets) |socket, i| {
+        reply_frames[i] = async handleReplies(socket);
+    }
 
     var seq: usize = 0;
     while (true) : (seq +%= 1) {
         const time = now();
         const echo = Icmp.initEcho(echo_id, @truncate(u16, seq), time);
 
-        const written = try fs.write(std.mem.asBytes(&echo));
-        std.debug.assert(written == @sizeOf(Icmp));
+        for (sockets) |socket| {
+            const written = try socket.write(std.mem.asBytes(&echo));
+            std.debug.assert(written == @sizeOf(Icmp));
+        }
+
         std.debug.print("-> {}: {}\n", .{ seq, time });
         std.time.sleep(std.time.ns_per_s);
     }
 }
 
-pub fn handleResponses(fs: std.fs.File) !void {
+pub fn handleReplies(fs: std.fs.File) !void {
     var buffer: [0x100]u8 align(4) = undefined;
     while (true) {
         const read = try fs.read(&buffer);
 
-        const response = Icmp.fromIp(buffer[0..read]);
+        const reply = Icmp.fromIp(buffer[0..read]);
 
-        if (response.un.echo.id() != echo_id) {
+        if (reply.un.echo.id() != echo_id) {
             continue;
         }
 
-        const sent = response.data.getEchoTime();
+        const sent = reply.data.getEchoTime();
         const received = now();
 
         const diff_us: u64 = us(received) - us(sent);
 
-        std.debug.print("<- {}: {} {}.{}ms\n", .{ response.un.echo.sequence(), sent, diff_us / 1000, diff_us % 1000 });
+        std.debug.print("<- {}: {} {}.{}ms\n", .{ reply.un.echo.sequence(), sent, diff_us / 1000, diff_us % 1000 });
     }
 }
 
