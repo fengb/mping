@@ -2,6 +2,24 @@
 
 const std = @import("std");
 
+pub const Ipv4Host = extern struct {
+    bytes: [4]u8,
+
+    pub fn format(
+        self: Ipv4Host,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        try writer.print("{}.{}.{}.{}", .{
+            self.bytes[0],
+            self.bytes[1],
+            self.bytes[2],
+            self.bytes[3],
+        });
+    }
+};
+
 pub const IpHeader = extern struct {
     ver_ihl: u8,
     tos: u8,
@@ -13,24 +31,6 @@ pub const IpHeader = extern struct {
     checksum: u16,
     src_addr: Ipv4Host,
     dst_addr: Ipv4Host,
-
-    const Ipv4Host = extern struct {
-        bytes: [4]u8,
-
-        pub fn format(
-            self: Ipv4Host,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            try writer.print("{}.{}.{}.{}", .{
-                self.bytes[0],
-                self.bytes[1],
-                self.bytes[2],
-                self.bytes[3],
-            });
-        }
-    };
 };
 
 pub const Icmp = extern struct {
