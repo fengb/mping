@@ -63,30 +63,31 @@ pub fn main() anyerror!u8 {
         const echo = netx.Icmp.initEcho(short_pid, @truncate(u16, seq), now());
 
         for (pingus) |*pingu| {
-            if (pingu.socket == null) {
-                if (netx.icmpConnectTo(&gpa.allocator, pingu.target)) |socket| {
-                    pingu.socket = socket;
-                    pingu.reply_frame = async handleReplies(socket);
-                } else |err| {
-                    std.debug.print("{} {} cannot connect: {}\n", .{ seq, pingu.target, err });
-                    continue;
-                }
-            }
-
-            if (pingu.socket.?.write(std.mem.asBytes(&echo))) |written| {
-                std.debug.assert(written == @sizeOf(netx.Icmp));
-            } else |err| {
-                // TODO: shutdown before closing
+            send(&gpa.allocator, pingu, echo) catch |err| {
                 std.debug.print("{} {} cannot connect: {}\n", .{ seq, pingu.target, err });
-                pingu.socket.?.close();
-                pingu.socket = null;
-                // TODO: ensure the listener is properly destroyed
-                // await pingu.reply_frame catch |e| {
-                //     std.debug.print("Done! {}\n", .{e});
-                // };
-            }
+                if (pingu.socket) |socket| {
+                    // TODO: shutdown before closing
+                    socket.close();
+                    pingu.socket = null;
+                    // TODO: ensure the listener is properly destroyed
+                    // await pingu.reply_frame catch |e| {
+                    //     std.debug.print("Done! {}\n", .{e});
+                    // };
+                }
+            };
         }
     }
+}
+
+pub fn send(allocator: *std.mem.Allocator, pingu: *Pingu, echo: netx.Icmp) !void {
+    if (pingu.socket == null) {
+        const socket = try netx.icmpConnectTo(allocator, pingu.target);
+        pingu.socket = socket;
+        pingu.reply_frame = async handleReplies(socket);
+    }
+
+    const written = try pingu.socket.?.write(std.mem.asBytes(&echo));
+    std.debug.assert(written == @sizeOf(netx.Icmp));
 }
 
 pub fn handleReplies(fs: std.fs.File) !void {
